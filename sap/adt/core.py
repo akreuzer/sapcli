@@ -1,6 +1,7 @@
 """Base ADT functionality module"""
 
 import os
+from abc import ABC
 
 import xml.sax
 from xml.sax.handler import ContentHandler
@@ -88,10 +89,29 @@ def _get_collection_accepts(discovery_xml):
 
 
 # pylint: disable=too-many-instance-attributes
-class Connection:
-    """ADT Connection for HTTP communication built on top Python requests.
+class Connection(ABC):
+    """Base class for ADT Connection for HTTP communication.
     """
+    def __init__(self):
+        self._adt_uri = 'sap/bc/adt'
+        self._query_args = ''
 
+    @property
+    def uri(self):
+        """ADT path for building URLs (e.g. sap/bc/adt)"""
+
+        return self._adt_uri
+
+    def _build_adt_url(self, adt_uri):
+        """Creates complete URL from a fragment of ADT URI
+           where the fragment usually refers to an ADT object
+        """
+
+        return f'{self._base_url}/{adt_uri}?{self._query_args}'
+
+    pass
+
+class ConnectionViaHTTP(Connection):
     # pylint: disable=too-many-arguments
     def __init__(self, host, client, user, password, port=None, ssl=True, verify=True):
         """Parameters:
@@ -104,6 +124,7 @@ class Connection:
             - ssl: boolean to switch between http and https
             - verify: boolean to switch SSL validation on/off
         """
+        super().__init__()
 
         setup_keepalive()
 
@@ -117,7 +138,6 @@ class Connection:
                 port = '80'
         self._ssl_verify = verify
 
-        self._adt_uri = 'sap/bc/adt'
         self._base_url = '{protocol}://{host}:{port}/{adt_uri}'.format(
             protocol=protocol, host=host, port=port, adt_uri=self._adt_uri)
         self._query_args = 'sap-client={client}&saml2=disabled'.format(
@@ -134,20 +154,6 @@ class Connection:
 
         return self._user
 
-    @property
-    def uri(self):
-        """ADT path for building URLs (e.g. sap/bc/adt)"""
-
-        return self._adt_uri
-
-    def _build_adt_url(self, adt_uri):
-        """Creates complete URL from a fragment of ADT URI
-           where the fragment usually refers to an ADT object
-        """
-
-        return '{base_url}/{adt_uri}?{query_args}'.format(
-            base_url=self._base_url, adt_uri=adt_uri,
-            query_args=self._query_args)
 
     def _handle_http_error(self, req, res):
         """Raise the correct exception based on response content."""

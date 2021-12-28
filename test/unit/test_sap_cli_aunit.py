@@ -16,7 +16,7 @@ from fixtures_adt_aunit import (
 )
 from fixtures_adt_coverage import ACOVERAGE_RESULTS_XML, ACOVERAGE_STATEMENTS_RESULTS_XML
 from infra import generate_parse_args
-from mock import Connection, Response, BufferConsole
+from mock import ConnectionViaHTTP as Connection, Response, BufferConsole
 from sap.cli.aunit import ResultOptions
 from sap.errors import SAPCliError
 

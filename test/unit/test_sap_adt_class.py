@@ -6,7 +6,7 @@ from sap import get_logger
 import sap.adt
 import sap.adt.wb
 
-from mock import Connection, Response
+from mock import ConnectionViaHTTP as Connection, Response
 
 from fixtures_adt import (LOCK_RESPONSE_OK, EMPTY_RESPONSE_OK, TEST_CLASSES_READ_RESPONSE_OK,
                           DEFINITIONS_READ_RESPONSE_OK, IMPLEMENTATIONS_READ_RESPONSE_OK)

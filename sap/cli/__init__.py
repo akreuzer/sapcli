@@ -99,9 +99,13 @@ def adt_connection_from_args(args):
 
     import sap.adt
 
-    return sap.adt.Connection(
-        args.ashost, args.client, args.user, args.password,
-        port=args.port, ssl=args.ssl, verify=args.verify)
+    return sap.adt.ConnectionViaHttp(args.ashost,
+                                     args.client,
+                                     args.user,
+                                     args.password,
+                                     port=args.port,
+                                     ssl=args.ssl,
+                                     verify=args.verify)
 
 
 def rfc_connection_from_args(args):
