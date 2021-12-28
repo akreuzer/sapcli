@@ -1,7 +1,9 @@
 """Base ADT functionality module"""
 
 import os
-from abc import ABC
+from abc import ABC, abstractmethod
+from typing import Optional, Union
+from dataclasses import dataclass
 
 import xml.sax
 from xml.sax.handler import ContentHandler
@@ -12,12 +14,8 @@ from requests.auth import HTTPBasicAuth
 from sap import get_logger, config_get
 from sap.rest.connection import setup_keepalive
 from sap.adt.errors import new_adt_error_from_xml
-from sap.rest.errors import (
-    HTTPRequestError,
-    UnexpectedResponseContent,
-    UnauthorizedError,
-    TimedOutRequestError
-)
+from sap.rest.errors import (HTTPRequestError, UnexpectedResponseContent,
+                             UnauthorizedError, TimedOutRequestError)
 
 
 def mod_log():
@@ -88,32 +86,130 @@ def _get_collection_accepts(discovery_xml):
     return xml_handler.result
 
 
+@dataclass
+class Response:
+    text: str
+    headers: dict[str, str]
+    status_code: int
+
+
 # pylint: disable=too-many-instance-attributes
 class Connection(ABC):
     """Base class for ADT Connection for HTTP communication.
     """
+
     def __init__(self):
         self._adt_uri = 'sap/bc/adt'
         self._query_args = ''
+        self._base_url = ''
+        self._collection_types = None
 
     @property
-    def uri(self):
+    def uri(self) -> str:
         """ADT path for building URLs (e.g. sap/bc/adt)"""
 
         return self._adt_uri
 
-    def _build_adt_url(self, adt_uri):
+    def _build_adt_url(self, adt_uri) -> str:
         """Creates complete URL from a fragment of ADT URI
            where the fragment usually refers to an ADT object
         """
 
         return f'{self._base_url}/{adt_uri}?{self._query_args}'
 
-    pass
+    @abstractmethod
+    def _execute_raw(self, method: str, uri: str, params: Optional[dict[str,
+                                                                        str]],
+                     headers: Optional[dict[str, str]],
+                     body: Optional[str]) -> Response:
+        pass
+
+    def execute(self,
+                method: str,
+                adt_uri: str,
+                params: Optional[dict[str, str]] = None,
+                headers: Optional[dict[str, str]] = None,
+                body: Optional[str] = None,
+                accept: Optional[Union[str, list[str]]] = None,
+                content_type: Optional[str] = None) -> Response:
+        """Executes the given ADT URI as an HTTP request and returns
+           the requests response object
+        """
+
+        url = self._build_adt_url(adt_uri)
+
+        if headers is None:
+            headers = {}
+
+        if accept is not None:
+            if isinstance(accept, list):
+                headers['Accept'] = ', '.join(accept)
+            else:
+                headers['Accept'] = accept
+
+        if content_type is not None:
+            headers['Content-Type'] = content_type
+
+        if not headers:
+            headers = None
+
+        resp = self._execute_raw(method, url, params, headers, body)
+
+        if accept:
+            resp_content_type = resp.headers['Content-Type']
+
+            if isinstance(accept, str):
+                accept = [accept]
+
+            if not any((resp_content_type.startswith(accepted)
+                        for accepted in accept)):
+                raise UnexpectedResponseContent(accept, resp_content_type,
+                                                resp.text)
+
+        return resp
+
+    def get_text(self, relativeuri):
+        """Executes a GET HTTP request with the headers Accept = text/plain.
+        """
+
+        return self.execute('GET',
+                            relativeuri,
+                            headers={
+                                'Accept': 'text/plain'
+                            }).text
+
+    @property
+    def collection_types(self):
+        """Returns dictionary of Object type URI fragment and list of
+           supported MIME types.
+        """
+
+        if self._collection_types is None:
+            response = self.execute('GET', 'discovery')
+            self._collection_types = _get_collection_accepts(response.text)
+
+        return self._collection_types
+
+    def get_collection_types(self, basepath, default_mimetype):
+        """Returns the accepted object XML format - mime type"""
+
+        uri = f'/{self._adt_uri}/{basepath}'
+        try:
+            return self.collection_types[uri]
+        except KeyError:
+            return [default_mimetype]
+
 
 class ConnectionViaHTTP(Connection):
     # pylint: disable=too-many-arguments
-    def __init__(self, host, client, user, password, port=None, ssl=True, verify=True):
+    def __init__(self,
+                 host,
+                 client,
+                 user,
+                 password,
+                 port=None,
+                 ssl=True,
+                 verify=True):
         """Parameters:
             - host: string host name
             - client: string SAP client
@@ -145,7 +241,6 @@ class ConnectionViaHTTP(Connection):
         self._user = user
         self._auth = HTTPBasicAuth(user, password)
         self._session = None
-        self._collection_types = None
         self._timeout = config_get('http_timeout')
 
     @property
@@ -153,7 +248,6 @@ class ConnectionViaHTTP(Connection):
         """Connected user"""
 
         return self._user
-
 
     def _handle_http_error(self, req, res):
         """Raise the correct exception based on response content."""
@@ -171,10 +265,20 @@ class ConnectionViaHTTP(Connection):
         raise HTTPRequestError(req, res)
 
     # pylint: disable=no-self-use
-    def _retrieve(self, session, method, url, params=None, headers=None, body=None):
+    def _retrieve(self,
+                  session,
+                  method,
+                  url,
+                  params=None,
+                  headers=None,
+                  body=None):
         """A helper method for easier testing."""
 
-        req = requests.Request(method.upper(), url, params=params, data=body, headers=headers)
+        req = requests.Request(method.upper(),
+                               url,
+                               params=params,
+                               data=body,
+                               headers=headers)
         req = session.prepare_request(req)
 
         mod_log().info('Executing %s %s', method, url)
@@ -184,18 +288,31 @@ class ConnectionViaHTTP(Connection):
         except requests.exceptions.ConnectTimeout as ex:
             raise TimedOutRequestError(req, self._timeout) from ex
 
-        mod_log().debug('Response %s %s:\n++++\n%s\n++++', method, url, res.text)
+        mod_log().debug('Response %s %s:\n++++\n%s\n++++', method, url,
+                        res.text)
 
         return (req, res)
 
-    def _execute_with_session(self, session, method, url, params=None, headers=None, body=None):
+    def _execute_with_session(self,
+                              session,
+                              method,
+                              url,
+                              params=None,
+                              headers=None,
+                              body=None):
         """Executes the given URL using the given method in
            the common HTTP session.
         """
 
-        req, res = self._retrieve(session, method, url, params=params, headers=headers, body=body)
+        req, res = self._retrieve(session,
+                                  method,
+                                  url,
+                                  params=params,
+                                  headers=headers,
+                                  body=body)
 
-        if res.status_code == 403 and (not headers or headers.get('x-csrf-token', '') != 'Fetch'):
+        if res.status_code == 403 and (
+                not headers or headers.get('x-csrf-token', '') != 'Fetch'):
             mod_log().debug('Re-Fetching CSRF token')
 
             del session.headers['x-csrf-token']
@@ -204,12 +321,16 @@ class ConnectionViaHTTP(Connection):
                 session,
                 'GET',
                 self._build_adt_url('discovery'),
-                headers={'x-csrf-token': 'Fetch'}
-            )
+                headers={'x-csrf-token': 'Fetch'})
 
             session.headers['x-csrf-token'] = response.headers['x-csrf-token']
 
-            req, res = self._retrieve(session, method, url, params=params, headers=headers, body=body)
+            req, res = self._retrieve(session,
+                                      method,
+                                      url,
+                                      params=params,
+                                      headers=headers,
+                                      body=body)
 
         if res.status_code >= 400:
             self._handle_http_error(req, res)
@@ -226,14 +347,19 @@ class ConnectionViaHTTP(Connection):
             self._session = requests.Session()
             self._session.auth = self._auth
             # requests.session.verify is either boolean or path to CA to use!
-            self._session.verify = os.environ.get('SAP_SSL_SERVER_CERT', self._session.verify)
+            self._session.verify = os.environ.get('SAP_SSL_SERVER_CERT',
+                                                  self._session.verify)
 
             if self._session.verify is not True:
-                mod_log().info('Using custom SSL Server cert path: SAP_SSL_SERVER_CERT = %s', self._session.verify)
+                mod_log().info(
+                    'Using custom SSL Server cert path: SAP_SSL_SERVER_CERT = %s',
+                    self._session.verify)
             elif self._ssl_verify is False:
                 import urllib3
                 urllib3.disable_warnings()
-                mod_log().info('SSL Server cert will not be verified: SAP_SSL_VERIFY = no')
+                mod_log().info(
+                    'SSL Server cert will not be verified: SAP_SSL_VERIFY = no'
+                )
                 self._session.verify = False
 
             discovery_headers = {'x-csrf-token': 'Fetch'}
@@ -241,7 +367,8 @@ class ConnectionViaHTTP(Connection):
             url = self._build_adt_url('core/discovery')
 
             try:
-                response = self._execute_with_session(self._session, 'GET', url, headers=discovery_headers)
+                response = self._execute_with_session(
+                    self._session, 'GET', url, headers=discovery_headers)
                 discovery_headers = {}
                 csrf_token = response.headers['x-csrf-token']
             except HTTPRequestError as ex:
@@ -249,7 +376,10 @@ class ConnectionViaHTTP(Connection):
                     raise ex
 
             url = self._build_adt_url('discovery')
-            response = self._execute_with_session(self._session, 'GET', url, headers=discovery_headers)
+            response = self._execute_with_session(self._session,
+                                                  'GET',
+                                                  url,
+                                                  headers=discovery_headers)
             self._collection_types = _get_collection_accepts(response.text)
 
             if csrf_token is None:
@@ -259,66 +389,19 @@ class ConnectionViaHTTP(Connection):
 
         return self._session
 
-    def execute(self, method, adt_uri, params=None, headers=None, body=None, accept=None, content_type=None):
-        """Executes the given ADT URI as an HTTP request and returns
-           the requests response object
-        """
+    def _execute_raw(self, method: str, uri: str, params: Optional[dict[str,
+                                                                        str]],
+                     headers: Optional[dict[str, str]], body: Optional[str]):
 
         session = self._get_session()
 
-        url = self._build_adt_url(adt_uri)
+        resp = self._execute_with_session(session,
+                                          method,
+                                          uri,
+                                          params=params,
+                                          headers=headers,
+                                          body=body)
 
-        if headers is None:
-            headers = {}
-
-        if accept is not None:
-            if isinstance(accept, list):
-                headers['Accept'] = ', '.join(accept)
-            else:
-                headers['Accept'] = accept
-
-        if content_type is not None:
-            headers['Content-Type'] = content_type
-
-        if not headers:
-            headers = None
-
-        resp = self._execute_with_session(session, method, url, params=params, headers=headers, body=body)
-
-        if accept:
-            resp_content_type = resp.headers['Content-Type']
-
-            if isinstance(accept, str):
-                accept = [accept]
-
-            if not any((resp_content_type.startswith(accepted) for accepted in accept)):
-                raise UnexpectedResponseContent(accept, resp_content_type, resp.text)
-
-        return resp
-
-    def get_text(self, relativeuri):
-        """Executes a GET HTTP request with the headers Accept = text/plain.
-        """
-
-        return self.execute('GET', relativeuri, headers={'Accept': 'text/plain'}).text
-
-    @property
-    def collection_types(self):
-        """Returns dictionary of Object type URI fragment and list of
-           supported MIME types.
-        """
-
-        if self._collection_types is None:
-            response = self.execute('GET', 'discovery')
-            self._collection_types = _get_collection_accepts(response.text)
-
-        return self._collection_types
-
-    def get_collection_types(self, basepath, default_mimetype):
-        """Returns the accepted object XML format - mime type"""
-
-        uri = f'/{self._adt_uri}/{basepath}'
-        try:
-            return self.collection_types[uri]
-        except KeyError:
-            return [default_mimetype]
+        return Response(text=resp.text,
+                        headers=resp.headers,
+                        status_code=resp.status_code)
