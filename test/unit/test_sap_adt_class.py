@@ -4,6 +4,7 @@ import unittest
 
 from sap import get_logger
 import sap.adt
+import sap.adt.wb
 
 from mock import Connection, Response
 
