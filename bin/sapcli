@@ -82,7 +82,11 @@ def parse_command_line(argv):
                             default=os.getenv("SNC_PARTNERNAME"))
     arg_parser.add_argument("--snc_lib", default=os.getenv("SNC_LIB"))
 
-    arg_parser.add_argument("--rest-over-rfc", action='store_true')
+    arg_parser.add_argument("--rest-over-rfc",
+                            action='store_true',
+                            dest="rest_over_rfc",
+                            default=os.getenv("SAP_REST_OVER_RFC")
+                            not in [None, 'n', 'no', 'false', 'off'])
 
     subparsers = arg_parser.add_subparsers()
     # pylint: disable=not-an-iterable

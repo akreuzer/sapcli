@@ -2,7 +2,7 @@
 
 import os
 from abc import ABC, abstractmethod
-from typing import Optional, Union
+from typing import Any, Optional, Union
 from dataclasses import dataclass
 
 import xml.sax
@@ -10,6 +10,7 @@ from xml.sax.handler import ContentHandler
 
 import requests
 from requests.auth import HTTPBasicAuth
+import urllib3
 
 from sap import get_logger, config_get
 from sap.rest.connection import setup_keepalive
@@ -91,6 +92,7 @@ class Response:
     text: str
     headers: dict[str, str]
     status_code: int
+    status_line: str
 
 
 # pylint: disable=too-many-instance-attributes
@@ -153,6 +155,8 @@ class Connection(ABC):
         if not headers:
             headers = None
 
+        method = method.upper()
+
         resp = self._execute_raw(method, url, params, headers, body)
 
         if accept:
@@ -198,6 +202,22 @@ class Connection(ABC):
             return self.collection_types[uri]
         except KeyError:
             return [default_mimetype]
+
+    def _handle_http_error(self, req, res):
+        """Raise the correct exception based on response content."""
+
+        if res.headers['content-type'] == 'application/xml':
+            error = new_adt_error_from_xml(res.text)
+
+            if error is not None:
+                raise error
+
+        # else - unformatted text
+        if res.status_code == 401:
+            user = self._user if "_user" in dir(self) else ""
+            raise UnauthorizedError(req, res, user)
+
+        raise HTTPRequestError(req, res)
 
 
 class ConnectionViaHTTP(Connection):
@@ -248,21 +268,6 @@ class ConnectionViaHTTP(Connection):
         """Connected user"""
 
         return self._user
-
-    def _handle_http_error(self, req, res):
-        """Raise the correct exception based on response content."""
-
-        if res.headers['content-type'] == 'application/xml':
-            error = new_adt_error_from_xml(res.text)
-
-            if error is not None:
-                raise error
-
-        # else - unformatted text
-        if res.status_code == 401:
-            raise UnauthorizedError(req, res, self._user)
-
-        raise HTTPRequestError(req, res)
 
     # pylint: disable=no-self-use
     def _retrieve(self,
@@ -404,4 +409,73 @@ class ConnectionViaHTTP(Connection):
 
         return Response(text=resp.text,
                         headers=resp.headers,
-                        status_code=resp.status_code)
+                        status_code=resp.status_code,
+                        status_line="")
+
+
+class ConnectionViaRFC(Connection):
+    """ConnetionViaRFC is a ADT Connection that dispatches the HTTP requests via SAP's RFC connector"""
+
+    def __init__(self, rfc_conn):
+        super().__init__()
+        self.rfc_conn = rfc_conn
+
+    def _make_request(self, method: str, uri: str, params: Optional[dict[str,
+                                                                         str]],
+                      headers: Optional[dict[str, str]],
+                      body: Optional[str]) -> dict[str, Any]:
+        if params:
+            params_encoded = "?" + urllib3.urlencode(params)
+        else:
+            params_encoded = ""
+
+        req: dict[str, Any] = {
+            "REQUEST_LINE": {
+                "METHOD": method,
+                "URI": f"/{self._adt_uri}{uri}{params_encoded}",
+            }
+        }
+
+        if headers:
+            req['HEADER_FIELDS'] = [{
+                "NAME": name,
+                "VALUE": value
+            } for name, value in headers.items()]
+
+        if body:
+            req["MESSAGE_BODY"] = body.encode("utf-8")
+
+        return req
+
+    def _parse_response(self, resp) -> Response:
+        status_code = int(resp["STATUS_LINE"]["STATUS_CODE"])
+        status_line = resp['STATUS_LINE']['REASON_PHRASE']
+
+        body = resp["MESSAGE_BODY"].decode("utf-8", "strict")
+        headers = {}
+        for v in resp["HEADER_FIELDS"]:
+            headers[v["NAME"].lower()] = v["VALUE"]
+
+        return Response(text=body,
+                        headers=headers,
+                        status_code=status_code,
+                        status_line=status_line)
+
+    def _execute_raw(self, method: str, uri: str, params: Optional[dict[str,
+                                                                        str]],
+                     headers: Optional[dict[str, str]],
+                     body: Optional[str]) -> Response:
+        req = self._make_request(method=method,
+                                 uri=uri,
+                                 params=params,
+                                 headers=headers,
+                                 body=body)
+        mod_log().info('Executing RFC request line %s', req)
+        resp = self.rfc_conn.call("SADT_REST_RFC_ENDPOINT", REQUEST=req)
+        mod_log().info('Got response %s', resp)
+        parsed_resp = self._parse_response(resp["RESPONSE"])
+
+        if parsed_resp.status_code >= 400:
+            self._handle_http_error(req, parsed_resp)
+
+        return parsed_resp
