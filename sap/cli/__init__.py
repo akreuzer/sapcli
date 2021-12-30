@@ -100,7 +100,7 @@ def adt_connection_from_args(args):
     import sap.adt
 
     if args.ashost and args.password and not args.rest_over_rfc:
-        return sap.adt.ConnectionViaHttp(args.ashost,
+        return sap.adt.ConnectionViaHTTP(args.ashost,
                                          args.client,
                                          args.user,
                                          args.password,

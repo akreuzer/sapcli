@@ -2,7 +2,7 @@
 
 import os
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Union
+from typing import Any, NoReturn, Optional, Union
 from dataclasses import dataclass
 
 import xml.sax
@@ -92,7 +92,7 @@ class Response:
     text: str
     headers: dict[str, str]
     status_code: int
-    status_line: str
+    status_line: str = ""
 
 
 # pylint: disable=too-many-instance-attributes
@@ -203,7 +203,7 @@ class Connection(ABC):
         except KeyError:
             return [default_mimetype]
 
-    def _handle_http_error(self, req, res):
+    def _handle_http_error(self, req, res: Response) -> NoReturn:
         """Raise the correct exception based on response content."""
 
         if res.headers['content-type'] == 'application/xml':
@@ -360,7 +360,6 @@ class ConnectionViaHTTP(Connection):
                     'Using custom SSL Server cert path: SAP_SSL_SERVER_CERT = %s',
                     self._session.verify)
             elif self._ssl_verify is False:
-                import urllib3
                 urllib3.disable_warnings()
                 mod_log().info(
                     'SSL Server cert will not be verified: SAP_SSL_VERIFY = no'
@@ -407,8 +406,8 @@ class ConnectionViaHTTP(Connection):
                                           headers=headers,
                                           body=body)
 
-        return Response(text=resp.text,
-                        headers=resp.headers,
+        return Response(text=resp.text or "",
+                        headers=resp.headers or {},
                         status_code=resp.status_code,
                         status_line="")
 
