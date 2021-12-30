@@ -71,22 +71,27 @@ def parse_command_line(argv):
         '--password', dest='password', type=str, default=None,
         help='Password')
 
-
-    arg_parser.add_argument("--mshost", default=os.getenv("SAP_MSHOST"))
-    arg_parser.add_argument("--msserv", default=os.getenv("SAP_MSSERV"))
-    arg_parser.add_argument("--sysid", default=os.getenv("SAP_SYSID"))
-    arg_parser.add_argument("--group", default=os.getenv("SAP_GROUP"))
-    arg_parser.add_argument("--snc_qop", default=os.getenv("SNC_QOP"))
-    arg_parser.add_argument("--snc_myname", default=os.getenv("SNC_MYNAME"))
+    arg_parser.add_argument("--mshost", default=os.getenv("SAP_MSHOST"), help="Message server address (if connecting "
+                                                                              "via a load balancer)")
+    arg_parser.add_argument("--msserv", default=os.getenv("SAP_MSSERV"), help="Message server port")
+    arg_parser.add_argument("--sysid", default=os.getenv("SAP_SYSID"), help="System ID (use if connecting via a "
+                                                                            "message server")
+    arg_parser.add_argument("--group", default=os.getenv("SAP_GROUP"), help="Group (use if connecting via a message "
+                                                                            "server")
+    arg_parser.add_argument("--snc_qop", default=os.getenv("SNC_QOP"), help="SAP Secure Login Client QOP")
+    arg_parser.add_argument("--snc_myname", default=os.getenv("SNC_MYNAME"), help="SAP Secure Login Client MyName")
     arg_parser.add_argument("--snc_partnername",
-                            default=os.getenv("SNC_PARTNERNAME"))
-    arg_parser.add_argument("--snc_lib", default=os.getenv("SNC_LIB"))
+                            default=os.getenv("SNC_PARTNERNAME"), help="SAP Secure Login Client Partner name")
+    arg_parser.add_argument("--snc_lib", default=os.getenv("SNC_LIB"),
+                            help="SAP Secure Login Client library (e.g. "
+                                 "/Applications/Secure Login Client.app/Contents/MacOS/lib/libsapcrypto.dylib")
 
     arg_parser.add_argument("--rest-over-rfc",
                             action='store_true',
                             dest="rest_over_rfc",
                             default=os.getenv("SAP_REST_OVER_RFC")
-                            not in [None, 'n', 'no', 'false', 'off'])
+                                    not in [None, 'n', 'no', 'false', 'off'],
+                            help="Prefer doing rest call over SAP RFC client (to use SNC or if HTTP port is firewalled)")
 
     subparsers = arg_parser.add_subparsers()
     # pylint: disable=not-an-iterable
@@ -109,7 +114,8 @@ def parse_command_line(argv):
         report_args_error_and_exit(
             arg_parser, ': '.join((
                 'No SAP Application Server Host name provided',
-                'use the option --ashost or the environment variable SAP_ASHOST in case of direct connection via HTTP or RFC',
+                'use the option --ashost or the environment variable SAP_ASHOST in case of direct connection via HTTP '
+                'or RFC',
                 'and use the option --mshost or the variable SAP_MSHOST in case of RFC or a load balancer'
             )))
 

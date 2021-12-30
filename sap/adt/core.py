@@ -1,6 +1,7 @@
 """Base ADT functionality module"""
 
 import os
+import urllib
 from abc import ABC, abstractmethod
 from typing import Any, NoReturn, Optional, Union
 from dataclasses import dataclass
@@ -89,6 +90,8 @@ def _get_collection_accepts(discovery_xml):
 
 @dataclass
 class Response:
+    """Response Dataclass
+    It abstracts from requests Response class and can also be used for RFC requests"""
     text: str
     headers: dict[str, str]
     status_code: int
@@ -126,6 +129,7 @@ class Connection(ABC):
                      body: Optional[str]) -> Response:
         pass
 
+    # pylint: disable=too-many-arguments
     def execute(self,
                 method: str,
                 adt_uri: str,
@@ -214,13 +218,15 @@ class Connection(ABC):
 
         # else - unformatted text
         if res.status_code == 401:
-            user = self._user if "_user" in dir(self) else ""
+            user = getattr(self, "_user", default="") # type: ignore
             raise UnauthorizedError(req, res, user)
 
         raise HTTPRequestError(req, res)
 
 
 class ConnectionViaHTTP(Connection):
+    """ADT Connection using requests and standard HTTP protocol.
+    """
     # pylint: disable=too-many-arguments
     def __init__(self,
                  host,
@@ -424,7 +430,7 @@ class ConnectionViaRFC(Connection):
                       headers: Optional[dict[str, str]],
                       body: Optional[str]) -> dict[str, Any]:
         if params:
-            params_encoded = "?" + urllib3.urlencode(params)
+            params_encoded = "?" + urllib.parse.urlencode(params)
         else:
             params_encoded = ""
 
@@ -446,14 +452,15 @@ class ConnectionViaRFC(Connection):
 
         return req
 
-    def _parse_response(self, resp) -> Response:
+    @staticmethod
+    def _parse_response(resp) -> Response:
         status_code = int(resp["STATUS_LINE"]["STATUS_CODE"])
         status_line = resp['STATUS_LINE']['REASON_PHRASE']
 
         body = resp["MESSAGE_BODY"].decode("utf-8", "strict")
         headers = {}
-        for v in resp["HEADER_FIELDS"]:
-            headers[v["NAME"].lower()] = v["VALUE"]
+        for field in resp["HEADER_FIELDS"]:
+            headers[field["NAME"].lower()] = field["VALUE"]
 
         return Response(text=body,
                         headers=headers,
